@@ -1,0 +1,14 @@
+{
+  "accessRight" : "16728",
+  "userDefinedA" : "Digitalisat",
+  "userDefinedB" : null,
+  "ieEntityType" : "Digitalisat",
+  "dctermsLicense" : "OA_mit_CC_Lizenz",
+  "dcXmlHeadElement" : "dc/*",
+  "sourceMD":
+    { "keine" : null},
+  "representations" :  ["MASTER"],
+  "subfoldersAsLabel" : "true",
+  "webHarvest" : "true",
+  "checksums" : [ "gesammelt","checksum.md5","MD5" ]
+}
