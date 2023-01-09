@@ -13,17 +13,18 @@ use File::Find;
 use JSON;
 use Data::Dumper;
 use Cwd;
-use File::BOM ();
 use utf8;
 use Encode;
 binmode STDOUT, ":utf8";    # for output
+my $version = "1.1";
 
 #print instructions
+print "CSV-Ingest_generisch Version: ".$version."\n";
 print "Das Skript erstellt eine CSV und die Ordnerstruktur für den Ingest.
 Der erstellte Ordner kann über einen Submission Job geingestet werden.
 Die Konfiguration wird über Config.json mitgegeben.
 Siehe auch README.MD\n";
-print "Checksummendatei: nur einfacher Zeilenumbruch (Linux-Style), Trennezichen zwischen Prüfsumme und Datei ist ein Tab, Schrägstriche werden umgedreht!\n";
+print "Checksummendatei: nur einfacher Zeilenumbruch (Linux-Style), Trennzeichen zwischen Prüfsumme und Datei ist ein Tab, Schrägstriche werden umgedreht!\n";
 
 #read in folders
 my @allFolders = grep { -d } glob("*");
@@ -41,7 +42,7 @@ my $config;
 }
 my $configParams = decode_json($config);
 
-my $accessRight = $configParams->{'accessRight'}; #TIB_STAFF only für DEV
+my $accessRight = $configParams->{'accessRight'};
 my $userDefinedA = $configParams->{'userDefinedA'};
 my $userDefinedB = $configParams->{'userDefinedB'};
 my $ieEntityType = $configParams->{'ieEntityType'};
@@ -49,9 +50,9 @@ my $dctermsLicense = $configParams->{'dctermsLicense'};
 
 my $dcXmlHeadElement = $configParams->{'dcXmlHeadElement'};
 my %sourceMD = %{ $configParams->{'sourceMD'}};
-my @representations = @{ $configParams->{'representations'} };
+my %representations = %{ $configParams->{'representations'}};
 my $subfoldersAsLabel = $configParams->{'subfoldersAsLabel'};
-my $webHarvest = $configParams->{'webHarvest'};
+my $ieMD = $configParams->{'ieMD'};
 my @checksums = @{ $configParams->{'checksums'} }; # "separat","gesammelt","keine"
 
 my @variableHeaders = ('Access Rights Policy ID (IE)','IE User Defined A','IE User Defined B','IE Entity Type',"License (DCTERMS)");
@@ -59,21 +60,27 @@ my @variableIEValues = ($accessRight,$userDefinedA,$userDefinedB,$ieEntityType,$
 
 #wenn nur eine Datei für Checksums vorliegt einen Hash erstellen
 if ($checksums[0] eq "gesammelt"){
+  #check if file exists
   my $checksumfile = $checksums[1];
-  my $filehandle;
-  open $filehandle,"<",$checksumfile;
-  chomp(my @oldmd5s = <$filehandle>);
-  close $filehandle;
+  if (-f $checksumfile){
+    my $filehandle;
+    open $filehandle,"<",$checksumfile;
+    chomp(my @oldmd5s = <$filehandle>);
+    close $filehandle;
 
-  #create hash -> checksums are the values
-  foreach my $string (@oldmd5s){
-    my @temp_key_value = split( " ", $string, 2 );
-    $files_md5s{$temp_key_value[1]} = $temp_key_value[0];
+    #create hash -> checksums are the values
+    foreach my $string (@oldmd5s){
+      my @temp_key_value = split( " ", $string, 2 );
+      $files_md5s{$temp_key_value[1]} = $temp_key_value[0];
+    }
+  } else {
+    print "Prüfsummendatei fehlt";
+    exit;
   }
-  #print Dumper(\%files_md5s);
 }
 
 #check if necessary files are available
+printRep("CSV-Ingest_generisch Version: ".$version);
 printRep("\ncheck of complete\n");
 print "\n";
 foreach my $folder (@allFolders) {
@@ -82,7 +89,7 @@ foreach my $folder (@allFolders) {
 		push (@filesComplete, $folder);
     printRep($folder.": alles in Ordnung\n\n");
 	} elsif ($result_checkComplete==1){
-			printRep($folder.": Fehler bei Erstellung der CSV aufgetreten\n\n");
+			printRep($folder.": ERROR: es fehlen Dateien, die verpflichtend sind\n\n");
 	}
 }
 
@@ -128,6 +135,7 @@ sub checkComplete{
 	#print "sind Master  und dc.xml vorhanden?\n";
 	my $foldername = $_[0];
 	my $existError = 0;
+  my $existWarning = 0;
 	my $errormessage = $foldername.": ";
 
   #check Filenames
@@ -150,7 +158,7 @@ sub checkComplete{
         if (length($char) > 3) {
           my $hexCode = $char;
           $hexCode =~ s/(.)/sprintf("%x",ord($1))/eg;
-          my $message = "\n--Dateiname enthält 4 Byte character, Hex: ".$hexCode." Dateiname: ".$file;
+          my $message = "\n--Dateiname enthält 4 Byte character, Hex: ".$hexCode." Dateiname: ".$file."\n";
           $existError = 1;
         	$errormessage = $errormessage.$message;
         }
@@ -158,16 +166,47 @@ sub checkComplete{
     }
 	}
 
-  if (-d "$foldername/MASTER"){
-    my $num_files = countfiles("$foldername/MASTER");
-    if ($num_files == 0){
-      $existError = 1;
-      $errormessage = $errormessage."keine Datei im Ordner Master, ";
+  #Repräsentationen prüfen, anhand der Angabe ob manatory oder optional unterscheiden zw. Warnung und Fehler
+  while ((my $representation, my $isMandatory) = each %representations){
+    #wenn Ordner vorhanden ist, aber keine Dateien darin, dann liegt ein Fehler vor
+    if (-d "$foldername/$representation"){
+      my $num_files = countfiles("$foldername/$representation");
+      if ($num_files == 0){
+        $existError = 1;
+        $errormessage = $errormessage."keine Datei im Ordner ".$representation.", ";
+      }
+    #wenn kein Ordner vorhanden ist, dann prüfen ob verpflichtend
+    } else {
+      if ($isMandatory eq "mandatory"){
+        $existError = 1;
+        $errormessage = $errormessage."kein Pflichtordner ".$representation.", ";
+      } else {
+        $existWarning = 1;
+        $errormessage = $errormessage."kein optionaler Ordner ".$representation.", ";
+      }
     }
-  } else {
-    $errormessage = $errormessage."kein Ordner Master, ";
+    #check for checksumsfiles
+    foreach my $file (@files){
+      if ($file =~ m/$foldername\/$representation/ && $file !~ /.*$checksums[1]$/ && -f $file && $file !~ /.*\.fileMD.xml$/){
+        if ($checksums[0] eq "gesammelt"){
+          #check if exists for each file otherwise error
+          my $path = getcwd;
+          $file =~ s/$path\///;
+          unless ($files_md5s{$file}){
+            $existError = 1;
+            $errormessage = $errormessage."Checksum für  ".$file." fehlt, ";
+          }
+        } elsif ($checksums[0] eq "separat"){
+          #TODO check if file exists otherwise error
+          my $checksumfile = $file.$checksums[1];
+          unless (-f $checksumfile){
+            $existError = 1;
+            $errormessage = $errormessage."Checksumfile ".$checksumfile." fehlt, ";
+          }
+        }
+      }
+    }
   }
-
 
 	if (-f "$foldername/dc.xml"){
 		my $messCharac = checkCharacters("$foldername/dc.xml");
@@ -175,31 +214,43 @@ sub checkComplete{
 			$existError = 1;
 			$errormessage = $errormessage.$messCharac;
 		}
+    my $parser = XML::LibXML->new;
+    my $xml = eval { $parser->parse_file("$foldername/dc.xml") };
+      if ( ! $xml ) {
+          printRep("Can't parse $foldername/dc.xml: $@");
+          $existError = 1;
+          $errormessage = $errormessage."dc.xml nicht wohlgeformt, ";
+      }
 	} else {
 		$existError = 1;
 		$errormessage = $errormessage."dc.xml fehlt, ";
 	}
 
-  #print if collection.xml file
+  #if collection.xml file
   if (-f "$foldername/collection.xml"){
-	my $messCharac = checkCharacters("$foldername/collection.xml");
-	if ($messCharac ne "ok"){
-		$existError = 1;
-		$errormessage = $errormessage.$messCharac;
-	}
-    printRep($foldername.": collection.xml vorhanden\n");
+	   my $messCharac = checkCharacters("$foldername/collection.xml");
+	   if ($messCharac ne "ok"){
+		      $existError = 1;
+		      $errormessage = $errormessage.$messCharac;
+	   }
+     if (-z "$foldername/collection.xml"){
+       $existError = 1;
+       $errormessage = $errormessage."collection.xml ist eine leere Datei, ";
+     }
+     printRep($foldername.": collection.xml vorhanden\n");
   }
 
-  if ($webHarvest eq "true") {
-    if (-f "$foldername/harvest.xml"){
-		my $messCharac = checkCharacters("$foldername/harvest.xml");
+  #check if ieMD exist
+  if ($ieMD eq "true") {
+    if (-f "$foldername/ieMD.xml"){
+		my $messCharac = checkCharacters("$foldername/ieMD.xml");
 		if ($messCharac ne "ok"){
 			$existError = 1;
 			$errormessage = $errormessage.$messCharac;
 		}
 	} else {
 		  $existError = 1;
-		  $errormessage = $errormessage."harvest.xml fehlt";
+		  $errormessage = $errormessage."ieMD.xml fehlt";
     }
   }
 
@@ -211,13 +262,14 @@ sub checkComplete{
     }
   }
 
-
-	if ($existError != 0) {
-    #throw exception ifnot succesful
+  if (($existError != 0) || ($existWarning != 0)) {
     printRep($errormessage."\n");
+  }
+  if ($existError != 0) {
+    #throw exception ifnot succesful
     return 1; #error
   } else {
-    return 0; #only executed when SIP creation was successful
+    return 0; #only executed when all checks were successful
   }
 }
 
@@ -246,7 +298,7 @@ sub createCSV{
 
   #create header for collection.xml
   if (-f $foldername."/collection.xml") {
-    my $dom = XML::LibXML->load_xml(location => $foldername."/collection.xml");
+    my $dom = XML::LibXML->load_xml(no_cdata => 0, location => $foldername."/collection.xml");
     my $nodes= $dom->findnodes( "collections/collection/*");
     foreach my $node (@$nodes){
       my $attribute = 0;
@@ -256,16 +308,17 @@ sub createCSV{
           $attribute = $att;
         }
       }
-      my $header = makeHeader($node->nodeName, $attribute);
+      my $header = makeHeader($node->nodeName, $attribute, "0");
     	push (@DCheaders, $header);
-  		push (@ColDCvalues, $node->textContent);
-  	}
+		my $colContent = makeContent($node);
+		push (@ColDCvalues, $colContent);
+	}
   }
   my $ColCount = @ColDCvalues;
 
 	#read in dc.XML
 	my $filename = $foldername.'/dc.xml';
-	my $dom = XML::LibXML->load_xml(location => $filename);
+	my $dom = XML::LibXML->load_xml(no_cdata => 0,location => $filename);
 	my $nodes= $dom->findnodes( $dcXmlHeadElement);
   if (scalar @$nodes == 0){
     $existError = 1;
@@ -279,9 +332,10 @@ sub createCSV{
         $attribute = $att;
       }
     }
-    my $header = makeHeader($node->nodeName, $attribute);
+    my $header = makeHeader($node->nodeName, $attribute, "0");
   	push (@DCheaders, $header);
-		push (@DCvalues, $node->textContent);
+	my $content = makeContent($node);
+		push (@DCvalues, $content);
 	}
 
   #fill sourceMD if available
@@ -294,37 +348,44 @@ sub createCSV{
 		    push (@iESourceMDs, $ieSourceMD);
     }
 	}
-  #fill out if webHarvest
-  my @headerWebHarvest;# = ('Primary Seed URL','WCT Identifier','Target Name','Group','Harvest Date','Harvest Time');
-  my @iEwebHarvestMD;
-  if ($webHarvest eq "true") {
-    my $filename = $foldername.'/harvest.xml';
-  	my $dom = XML::LibXML->load_xml(location => $filename);
-  	my $nodes= $dom->findnodes("harvest/*");
+  #fill out if ieMD - Metadata in IE Row
+  my @headerIeMD;# = ('Primary Seed URL','WCT Identifier','Target Name','Group','Harvest Date','Harvest Time');
+  my @allIeMD;
+  if ($ieMD eq "true") {
+    my $filename = $foldername.'/ieMD.xml';
+  	my $dom = XML::LibXML->load_xml(no_cdata => 0, location => $filename);
+  	my $nodes= $dom->findnodes("metadata/*");
   	foreach my $node (@$nodes){
       my $header = $node->nodeName;
-      if ($header eq "objectIdentifier"){
+      if ($header eq "oaiObjectIdentifier"){
         $header = "OAI (Object Identifier - IE)";
-      } else {
+      } elsif ($header eq "urnObjectIdentifier"){
+        $header = "URN (Object Identifier - IE)";
+      } elsif ($header eq "uriObjectIdentifier"){
+        $header = "URI (Object Identifier - IE)";
+      }else {
         $header =~ s/([A-Z][a-z])/ $1/g;
         $header =~ s/([a-z])([A-Z])/$1 $2/g;
+        $header =~ s/^\s+//g;
       }
-      push (@headerWebHarvest, ucfirst($header));
-  		push (@iEwebHarvestMD, $node->textContent);
-  	}
+      push (@headerIeMD, ucfirst($header));
+	  	my $ieContent = makeContent($node);
+		push (@allIeMD, $ieContent);
+	}
   }
 
   #fill out if fileMD
   my @headerFileMD; # aray with all the headers
   my @fileMDValues; # array of arrays, first element is filename, following array consists of values, mapped to the headers
-  my @fileMDfiles = fileMDcheck($foldername);
+  my @fileMDfiles = fileMDcheck($foldername); #array contains all filenames with associated fileMD.xml, or "false" if not fileMD
   if ($fileMDfiles[0] ne "false"){
-    my $fileMDcount = scalar @fileMDfiles;
+    my $fileMDcount = scalar @fileMDfiles; #Anzahl aller Dateien, denen fileMDs zugewiesen sind
+    #Schleife, für jede Datei im folder, der eine fileMD.xml zugewiesen ist
     for (my $i = 0; $i < $fileMDcount; $i++){
       my @arrValues;
       #füge Dateinamen als erstes Element hinzu
       push (@arrValues, $fileMDfiles[$i]);
-      #fülle tempräre Header / Value Arrays aus
+      #fülle tempräre Header / Value Arrays mit den Werten aud der fileMD.xml aus
       my @hFtemp;
       my @aVtemp;
       my $dom = XML::LibXML->load_xml(location => $foldername."/".$fileMDfiles[$i].".fileMD.xml");
@@ -337,11 +398,12 @@ sub createCSV{
             $attribute = $att;
           }
         }
-        my $header = makeHeader($node->nodeName, $attribute);
+        my $header = makeHeader($node->nodeName, $attribute, "1");
         push(@hFtemp, $header);
-        push(@aVtemp,$node->textContent);
+        my $filemdContent = makeContent($node);
+        push(@aVtemp,$filemdContent);
       }
-
+      #befüllen von @headerFileMD mit den Headern, @arrValues mit den Werten
       if (scalar @headerFileMD == 0){
         #print "neuer Header wird angelegt\n";
         push(@headerFileMD, @hFtemp);
@@ -361,7 +423,7 @@ sub createCSV{
           splice(@hFtemp,$position,1);
           splice(@aVtemp,$position,1);
         }
-        if (scalar @hFtemp >0){
+        if (scalar @hFtemp >0){ #nachdem alle vorhandenen Header zugeordnet sind, werden nun alle restlichen, neuen hinzugefügt
           push(@headerFileMD, @hFtemp);
           push(@arrValues, @aVtemp);
         }
@@ -370,17 +432,13 @@ sub createCSV{
     push (@fileMDValues, $ref);
     }
   }
-  # foreach my $test (@headerFileMD){
-  #   print $test;
-  # }
-  # print Dumper @fileMDValues;
 
 	#make array for first line of CSV
 	@csvLineHeaders = ('Object Type','Title (DC)');
 	push (@csvLineHeaders, @DCheaders);
 	push (@csvLineHeaders, @variableHeaders);
-  if (@headerWebHarvest){
-    push (@csvLineHeaders, @headerWebHarvest);
+  if (@headerIeMD){
+    push (@csvLineHeaders, @headerIeMD);
   }
 	if (@headerSourceMD) {
     push (@csvLineHeaders, @headerSourceMD);
@@ -431,8 +489,8 @@ sub createCSV{
   }
 	push (@csvLineIE, @DCvalues);
 	push (@csvLineIE, @variableIEValues);
-  if (@iEwebHarvestMD){
-    push (@csvLineIE, @iEwebHarvestMD);
+  if (@allIeMD){
+    push (@csvLineIE, @allIeMD);
   }
 
 	if (@iESourceMDs) {
@@ -443,18 +501,18 @@ sub createCSV{
 	push (@csvLineIE, @ieLastElements);
 	push(@csv,[@csvLineIE]);
 
-  #make array for representations
-	foreach my $representation (@representations){
-		if (-d "$foldername/$representation") {
-			my @repLine = makeRepLine($representation,$arrayLenght);
-			push(@csv,[@repLine]);
-			#foreach file in representation make @csvLine
+  #make array for representations and files
+  while ((my $representation, my $isMandatory) = each %representations){
+    if (-d "$foldername/$representation") {
+      my @repLine = makeRepLine($representation,$arrayLenght);
+      push(@csv,[@repLine]);
+      #foreach file in representation make @csvLine
       my $path = $foldername."/".$representation."/";
       #my @files = File::Find::Rule->in($path);
       my @files;
       find( sub{ push @files, $File::Find::name }, $path);
       foreach my $file (@files){
-        if ($file !~ /.*\.md5$/ && -f $file && $file !~ /.*\.fileMD.xml$/){
+        if ($file !~ /.*$checksums[1]$/ && -f $file && $file !~ /.*\.fileMD.xml$/){
           #hier fileMD rausuchen und übergeben, falls vorhanden
           my @mdValues;
           for (my $l = 0; $l< scalar @fileMDValues; $l++){
@@ -474,25 +532,25 @@ sub createCSV{
           my @fileLine = makeFileLine($file,$arrayLenght,\@mdValues, scalar @headerFileMD);
           push(@csv,[@fileLine]);
         }
-			}
-		}
-	}
+      }
+    }
+  }
 
 	#make csv
 	my $csv = Text::CSV->new ( { binary => 1, eol =>"\r\n"} )
 		or die "Cannot use CSV: ".Text::CSV->error_diag ();
-	open my $fh, '> :utf8 :via(File::BOM)', "$foldername.csv" or die "$foldername.csv: $!";
+	open my $fh, '> :utf8', "$foldername.csv" or die "$foldername.csv: $!";
 	$csv->print ($fh, $_) for @csv;
 	close $fh or die "$foldername.csv: $!";
 
 	#change first line of CSV so that it does not contain any quotes
 	my $CSVfilename = "$foldername.csv";
-	open my $in_fh, '< :utf8 :via(File::BOM)', $CSVfilename
+	open my $in_fh, '< :utf8', $CSVfilename
 	  or warn "Cannot open $CSVfilename for reading: $!";
 	my $first_line = <$in_fh>;
 	$first_line =~ s/"//g;
 
-	open my $out_fh, '> :utf8 :via(File::BOM)', "$CSVfilename.tmp"
+	open my $out_fh, '> :utf8', "$CSVfilename.tmp"
 	  or warn "Cannot open $CSVfilename.tmp for writing: $!";
 
 	print {$out_fh} $first_line;
@@ -549,7 +607,7 @@ sub mkFolders{
 	my $to = $fcontent."/".$foldername.".csv";
 	my $returnValueCopyCSV = move $from, $to;
 	#move Representations
-	foreach my $representation (@representations){
+  while ((my $representation, my $isMandatory) = each %representations){
 		if (-d "$foldername/$representation") {
 			my $dfrom = $foldername."/".$representation;
 			my $dto = $forig."/".$representation;
@@ -565,7 +623,7 @@ sub mkFolders{
         find( sub{ push @files, $File::Find::name }, $dto);
         #foreach files in the directory (recursively)
         foreach my $file (@files) {
-          if ($file =~ m/.md5$/ && -f $file){
+          if ($file =~ m/.$checksums[1]$/ && -f $file){
             unlink $file;
           }
         }
@@ -624,13 +682,11 @@ sub makeFileLine{
 	my @fileLine;
 	@fileLine[$arrayLenght] = undef;
 	@fileLine[0] = "FILE";
-  #TODO push in fileMDvalues
-  #print Dumper @fileMDValues;
-  #print "File: ".$filename."\n";
-  #print Dumper @fileMDValues;
   if ($position > 1) {
-    if ($checksums[0] eq "keine"){
+    if ($checksums[0] eq "keine" && $subfoldersAsLabel eq "false"){
       $position = $position+5;
+    } elsif ($checksums[0] ne "keine" && $subfoldersAsLabel eq "true"){
+      $position = $position+7;
     } else {
       $position = $position+6;
     }
@@ -679,12 +735,15 @@ sub makeFileLine{
 sub fillSourceMD {
 	my $foldername = $_[0];
 	my $filename = $_[1];
-	my $MDType = $_[2];
+	my $temp = $_[2];
+  my $MDType;
+  my $encoding;
+  ($MDType , $encoding) = split(/;/,$temp, 2);
 	my $returnvalue;
 	my $XML;
 	my $pathSourceMD = $foldername."/SOURCE_MD/".$filename;
 
-	my $firstLinesSourceMD = q(<<?xml version="1.0" encoding="UTF-8"?>)."\r";
+	my $firstLinesSourceMD = "<?xml version=\"1.0\" encoding=\"".$encoding."\"?>\r";
 	$firstLinesSourceMD = $firstLinesSourceMD.q(<sourceMD>)."\r";
 	$firstLinesSourceMD = $firstLinesSourceMD."<mdWrap MDTYPE=\"".$MDType."\">\r";
 	$firstLinesSourceMD = $firstLinesSourceMD.q(<xmlData>)."\r";
@@ -693,13 +752,13 @@ sub fillSourceMD {
 	$lastLinesSourceMD = $lastLinesSourceMD."</sourceMD>\r";
 
 	#fill variable XML with the content of folder SOURCE_MD
-	open(my $fh, '<', $pathSourceMD) or die "cannot open file $pathSourceMD";
+	open(my $fh, "<:encoding(".$encoding.")", $pathSourceMD) or die "cannot open file $pathSourceMD";
 	{
 			local $/;
 			$XML = <$fh>;
 	}
 	close($fh);
-	$XML =~ s/<\?xml version="1\.0" encoding="UTF-8"\?>//;
+	$XML =~ s/<\?xml version="1\.0" encoding="$encoding"\?>//;
 	$XML =~ s/\r//g;
 
 	$returnvalue = $firstLinesSourceMD.$XML.$lastLinesSourceMD;
@@ -732,10 +791,11 @@ sub countfiles{
 # returns the header
 sub makeHeader{
   #hier dc und dterms unterscheiden können nach namespace
-  #wenn type vergeben, dass einlesen können,
+  #wenn type vergeben, wird das über attribute eingelesen,
   #Beispiel dc:identifier xsi:type="dcterms:ISSN" wird zu Identifier - ISSN (DC)
   my $nodeName = $_[0];
   my $attribute = $_[1];
+  my $forFile = $_[2];
   my $name;
   my $namespace;
   my $header;
@@ -751,13 +811,43 @@ sub makeHeader{
     #$name trennen wenn Camel Style IsPartOf -> Is Part Of
     $name =~ s/([A-Z])/ $1/g;
     $header = ucfirst(($name)).$namespace;
+
   } else {
     $header = ucfirst($nodeName);
+    $header =~ s/([A-Z][a-z])/ $1/g;
+    $header =~ s/([a-z])([A-Z])/$1 $2/g;
+	$header = $header." (DC)";
   }
+  if ($forFile == 1){
+      $header = "FILE - ".$header;
+  }
+  #führendes Leerzeichen entfernen
+  $header =~ s/^\s+//g;
   return $header;
 }
 
 #####################################################################################
+# subroutine makes content for XML-Elements, keeps CDATA-Tags
+# returns the content
+sub makeContent{
+  my $node = $_[0];
+  my $content;
+  if($node->childNodes) {
+        foreach my $child ($node->childNodes()) {
+            if ($child->nodeType == XML::LibXML::XML_CDATA_SECTION_NODE) {
+                $content .= $child->toString;
+            } else {
+                $content .= $child->textContent;
+            }
+        }
+    } else {
+        $content = $node->textContent;
+    }
+  return $content;
+}
+
+
+##############################################################
 # subroutine print Report on Screen and in report.txt
 sub printRep{
   my $message = $_[0];
@@ -815,7 +905,7 @@ sub fileMDcheck{
   my $foldername = $_[0];
   my @return;
   #mache eine Liste von alles Files pro Repräsentationsordner
-  foreach my $representation (@representations){
+  while ((my $representation, my $isMandatory) = each %representations){
     my $dir = $foldername."/".$representation;
     my $path = getcwd;
     $path = $path."/".$dir;
