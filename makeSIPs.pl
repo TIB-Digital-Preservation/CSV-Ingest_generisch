@@ -16,7 +16,7 @@ use Cwd;
 use utf8;
 use Encode;
 binmode STDOUT, ":utf8";    # for output
-my $version = "1.1";
+my $version = "1.2";
 
 #print instructions
 print "CSV-Ingest_generisch Version: ".$version."\n";
@@ -186,26 +186,28 @@ sub checkComplete{
       }
     }
     #check for checksumsfiles
-    foreach my $file (@files){
-      if ($file =~ m/$foldername\/$representation/ && $file !~ /.*$checksums[1]$/ && -f $file && $file !~ /.*\.fileMD.xml$/){
-        if ($checksums[0] eq "gesammelt"){
-          #check if exists for each file otherwise error
-          my $path = getcwd;
-          $file =~ s/$path\///;
-          unless ($files_md5s{$file}){
-            $existError = 1;
-            $errormessage = $errormessage."Checksum für  ".$file." fehlt, ";
-          }
-        } elsif ($checksums[0] eq "separat"){
-          #TODO check if file exists otherwise error
-          my $checksumfile = $file.$checksums[1];
-          unless (-f $checksumfile){
-            $existError = 1;
-            $errormessage = $errormessage."Checksumfile ".$checksumfile." fehlt, ";
-          }
-        }
-      }
-    }
+	if (($checksums[0] eq "separat")||($checksums[0] eq "gesammelt")){
+		foreach my $file (@files){
+		  if ($file =~ m/$foldername\/$representation/ && $file !~ /.*$checksums[1]$/ && -f $file && $file !~ /.*\.fileMD.xml$/){
+			if ($checksums[0] eq "gesammelt"){
+			  #check if exists for each file otherwise error
+			  my $path = getcwd;
+			  $file =~ s/$path\///;
+			  unless ($files_md5s{$file}){
+				$existError = 1;
+				$errormessage = $errormessage."Checksum für  ".$file." fehlt, ";
+			  }
+			} elsif ($checksums[0] eq "separat"){
+			  #TODO check if file exists otherwise error
+			  my $checksumfile = $file.$checksums[1];
+			  unless (-f $checksumfile){
+				$existError = 1;
+				$errormessage = $errormessage."Checksumfile ".$checksumfile." fehlt, ";
+			  }
+			}
+		  }
+		}
+	}
   }
 
 	if (-f "$foldername/dc.xml"){
@@ -512,25 +514,25 @@ sub createCSV{
       my @files;
       find( sub{ push @files, $File::Find::name }, $path);
       foreach my $file (@files){
-        if ($file !~ /.*$checksums[1]$/ && -f $file && $file !~ /.*\.fileMD.xml$/){
-          #hier fileMD rausuchen und übergeben, falls vorhanden
-          my @mdValues;
-          for (my $l = 0; $l< scalar @fileMDValues; $l++){
-            if ($file =~ m/$fileMDValues[$l][0]/){
-              my $count = 1;
-              my $last_arr_index = $#{ $fileMDValues[$l] };
-              until ($count > $last_arr_index){
-                push (@mdValues,$fileMDValues[$l][$count]);
-                $count++;
-              }
-            }
-          }
-          if (!@mdValues){
-            @mdValues = undef;
-          }
-          #print Dumper @mdValues;
-          my @fileLine = makeFileLine($file,$arrayLenght,\@mdValues, scalar @headerFileMD);
-          push(@csv,[@fileLine]);
+        if (-f $file && $file !~ /.*\.fileMD.xml$/ && (($checksums[0] eq "separat" && $file !~ /.*$checksums[1]$/)||($checksums[0] ne "separat"))){
+			  #hier fileMD rausuchen und übergeben, falls vorhanden
+				  my @mdValues;
+			  for (my $l = 0; $l< scalar @fileMDValues; $l++){
+				if ($file =~ m/$fileMDValues[$l][0]/){
+				  my $count = 1;
+				  my $last_arr_index = $#{ $fileMDValues[$l] };
+				  until ($count > $last_arr_index){
+					push (@mdValues,$fileMDValues[$l][$count]);
+					$count++;
+				  }
+				}
+			  }
+			  if (!@mdValues){
+				@mdValues = undef;
+			  }
+			  #print Dumper @mdValues;
+			  my @fileLine = makeFileLine($file,$arrayLenght,\@mdValues, scalar @headerFileMD);
+			  push(@csv,[@fileLine]);
         }
       }
     }

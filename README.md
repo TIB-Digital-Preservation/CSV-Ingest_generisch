@@ -1,5 +1,7 @@
 # CSV-Ingest generisch
 
+(English Version below)
+
 Das Skript erstellt eine CSV und die Ordnerstruktur für den Ingest.
 Der erstellte Ordner kann über einen Submission Job geingestet werden.
 Die Konfiguration wird über Config.json mitgegeben.
@@ -27,6 +29,7 @@ Ordner
 |  |  |  
 |  |  + Datei1.pdf  
 |  |  + [Datei1.pdf.md5]  
+|  |  + [Datei1.pdf.fileMD.xml]							 
 |  |  + Datei2.pdf  
 |  |  \ [Datei2.pdf.md5]  
 |  |  
@@ -50,8 +53,6 @@ Ordner
 
 ## Skript ausführen
 Das Skript kann lokal oder auf dem Server genutzt werden.
-Lokal: Bei Cygwin müssen einige Perl-Module installiert werden.
-Server: auf dem Myapp ist Perl installiert.
 
 Config.json und makeSIPs.pl liegen im selben Ordner wie die zu packenden Pakete. Auf dem Server kann das Skript per Kommandozeile mit folgendem Befehl aufgerufen werden:
 `perl makeSIP.pl`
@@ -90,7 +91,7 @@ Für die Access Rights muss die ID angegeben werden, dies bedeutet auch, dass f�
 
 ### User Defined Felder
 Beispiel:  
-`"userDefinedA" : "MFO_ODA_Digitalisat",`  
+`"userDefinedA" : "Digitalisat",`  
 `"userDefinedB" : null,`
 
 Beide Werte müssen immer übergeben werden. Wenn das userDefinedB nicht ausgefüllt werden soll, dann null eintragen.
@@ -204,6 +205,236 @@ Als Filemetadaten können weiter dc-/dcterms-Elemente übergeben werden, aber au
 ## Weitere Entwicklungmöglichkeiten:
 * Werte über Webservice abprüfen
 * Module erstellen für generische Aufgaben
+
+# CSV Ingest generic (english version of README)
+
+The script creates a CSV and the folder structure for the ingest.
+The created folder can be tested via a submission job.
+The configuration is provided via Config.json.
+
+## Prerequisites
+The files are available in an folderstructure:
+* one folder per IE
+* a subfolder named after the representations
+* in the subfolder the respective files
+* a dc.xml with the descriptive metadata in the IE folder
+* a collection.xml, if the IE is assigned to one or more collections
+* an ieMD.xml if further metadata should be included on IE level (e.g. from a harvest or CMS record IDs)
+* a checksums.md5 (or other file extension) if checksums are present, alternatively one file per file with [filename].[file extension].[checksum format].
+* Source metadata are located in the folder SOURCE_MD
+```
+folder
+|  
++--IE1  
+| |  
+| +--dc.xml  
+| +--[ieMD.xml]  
+| +--[collection.xml]  
+| +--[checksum.md5]  
+| |--MASTER  
+| | |  
+| + [file1.pdf  
+| | + [file1.pdf.md5]  
+| + [File1.pdf.fileMD.xml]							 
+| + file2.pdf  
+| | [File2.pdf.md5]  
+| |  
+| |--[DERIVATIVE_COPY]  
+| | |  
+| + file3.pdf  
+| | \ [file3.pdf.md5]  
+| |  
+| \--[SOURCE_MD]  
+| |  
+| \ filename.xml  
+|  
++--[IE2]  
++--[IE3]  
++--[checksums.md5]  
++--config.json  
+\--``--makeSIPs.pl  
+```
+
+
+
+## Run script
+The script can be used locally or on the server.
+Local: on Cygwin some Perl modules have to be installed.
+Server: on the Myapp Perl is installed.
+
+Config.json and makeSIPs.pl are in the same folder as the packages to be packed. On the server, the script can be invoked via command line with the following command:
+`perl makeSIP.pl`
+
+### What metadata is passed to which configuration file?
+
+* Config.json
+
+    - IE entity type
+    - Status
+    - User Defined Fields
+    - Access Right Policy ID
+    - dcterms:license
+    - Source Metadata
+    - Representations
+    - ieMD file available
+    - Checksums present
+
+
+* ieMD.xml
+    - Web Harvest Section
+    - Object Identifier
+    - CMS Section
+    - Retention Policy
+    - Submission Reason
+
+
+## Config.json
+The configuration file is in JSON format, and can be modified using the editor.
+
+### Access Rights
+Example:  
+`"accessRight" : "16728",`.
+
+For the Access Rights the ID must be specified, this also means that for DEV, TEST and PROD other IDs must be assigned.
+
+### User Defined Fields
+Example:  
+`"userDefinedA" : "Digitalisat",`  
+`"userDefinedB" : null,`
+
+Both values must always be passed. If the userDefinedB is not to be filled in, then enter null.
+
+### IE Entity ieEntity
+Example:  
+`"ieEntityType" : "Digitized",`  
+
+### DC Terms License
+Examples:  
+`"dctermsLicense" : "OA_with_CC_License",  
+"dctermsLicense" : null`.  
+
+The value for dcterms:license can be specified for all IEs in Config.json. If a dcterms:license is to be assigned individually for each package, this must be specified in the dc:xml. The value for dctermsLicense in Config.json is filled with "null".  
+
+### dcXML Head Element
+Example:  
+`"dcXmlHeadElement" : "/srw_dc:dc/*",`.  
+
+To support different versions of DC XML files, the notation of the dc head element (root element of dc.xml) must be specified. Both DC elements and DCTerms elements are passed, for this the namespace must be specified for both.
+For example, the XML file looks like this:  
+`<srw_dc:dc xmlns:srw_dc="info:srw/schema/1/dc-schema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="info:srw/schema/1/dc-schema http://www.loc.gov/standards/sru/resources/dc-schema.xsd">`  
+` <dc:title xmlns="http://purl.org/dc/elements/1.1/">Operations research</dc:title>`  
+` <dcterms:isPartOf>Journal of Mathemtics/2020/02/01</dcterms:isPartOf>`  
+`</srw_dc:dc>`  
+
+### Source Metadata  
+Example 1:  
+`"sourceMD":`  
+` {"marc.xml" : "MARC;UTF-8"},`  
+Example 2:  
+`"sourceMD":`  
+` { "marc.xml" : "MARC;UTF-8" , "mods.xml" : "MODS;UTF-8"},`  
+Example 3:  
+`"sourceMD":`
+` `"none" : null},`  
+Example 4:  
+`"sourceMD":`
+` { "conservationMD.xml" : "OTHER\" OTHERMDTYPE=\"DelftConservationMetadata;UTF-8"},` `  
+
+All source metadata natively supported by Rosetta can be passed. For this purpose, the filename as well as the MetadataType and character encoding are specified in each case. MetadataType and character encoding are passed with quotes and with separator symbol ; (see examples).
+More than one SourceMD file can be supplied (see example 2).
+If no source metadata is to be passed, it must be specified as in Example 3.
+If source metadata of type "OTHER" is to be passed, then this must be passed as in Example 4 (i.e. with \ in front of the "). Additionally, in Rosetta (Admin -> Code Tables -> Other Source Metadata Subtype) it must be specified that there is an Other SourceMetadata Type that matches the OTHERMDTYPE (in the example DelftConservationMetadata).
+
+### Representations
+Example:  
+`"representations" : { "MASTER" : "mandatory" , "DERIVATIVE_COPY" : "optional"},`  
+
+Any number of representations can be supplied, as long as they are stored in Rosetta.
+For each representation it is specified whether it must be present ("mandatory"), or whether it may be present ("optional").
+
+
+### Subfolders as label
+Example:  
+`"subfoldersAsLabel" : "true",` `  
+`"subfoldersAsLabel" : "false",`
+
+Subfolders in representation folders can be used to mark files with a label, for this "true" is deposited in the Config.json. The folder name then corresponds to the label name, e.g. the file "MASTER/supplement/Arikel1_Supplement.pdf" is assigned the label "supplement".  
+If there are subfolders in the representations, which should be included as subfolders in Rosetta, then "false" is stored in Config.json. IEs cannot get labels with this setting.
+
+### Metadata at IE level.
+Example:  
+`"ieMD" : "true",`  
+`"ieMD" : "false",`
+
+If IE-level metadata is supplied that is not a DC or DC Terms element, ieMD.xml can be supplied. See examples/complete_with_md5_pro_file/test for an example.  The IE metadata can be used for __Harvest Metadata__ and __Information about CMS Enrichment (CMS Record ID and CMS System)__, among other things.
+
+`<?xml version='1.0' encoding='UTF-8' standalone='no'?> `  
+`<metadata> `  
+` <primarySeedURL>URL</primarySeedURL> `  
+` <WCTIdentifier>script name version 1.2</WCTIdentifier> `  
+` <targetName>JSPEC</targetName> `  
+` <group>Publisher</group> `
+` <harvestDate>2021-05-12 17:21:59</harvestDate> `   
+`</metadata>`  
+
+
+### Checksums
+Example 1:  
+`"checksums" : [ "separate",".md5", "MD5" ]`  
+Example 2:  
+`"checksums" : [ "collected", "filename.md5", "MD5" ]`  
+Example 3:  
+`"checksums" : [ "none" ]`  
+
+Checksums can, but do not have to be passed.
+Either all checksums for the IEs can be present in a file at the makeSIP.pl level ("collected", example 2), in which case the filename is passed, and the checksum type.
+There can also be one checksum file per file ("separate", example 1), then the file extension of the checksum file is given, and the checksum type.
+Important note for the checksum file: only single line break (Linux style), separator between checksum and file is a tab, path specifications/with/these/slashes!
+
+### collection.xml
+An IE can be assigned to a collection. This requires an XML with the following structure:  
+`<?xml version='1.0' encoding='UTF-8' standalone='no'?> `  
+`<collections xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/"> `  
+` <collection> `  
+` <dcterms:isPartOf>OpenAccess-ejournals/Hindawi/Journal of Automated Methods and Management in Chemistry</dcterms:isPartOf> `  
+` <dc:title>2010</dc:title> `  
+` <dc:identifier xsi:type="dcterms:ISSN">0000-9999</dc:identifier> `  
+` </collection>`  
+`</collections>`  
+
+A <collection> tag is created for the collection. The IE level metadata is stored as dc / dcterms - metadata. Mandatory are information about dc:title (name of the collection) and dc:isPartOf (further parent collections, currently available are "IWF" and "OpenAccess-ejournals").
+
+### Checksums
+Example 1:  
+`"checksums" : [ "separate",".md5", "MD5" ]`  
+Example 2:  
+`"checksums" : [ "collected", "filename.md5", "MD5" ]`  
+Example 3:  
+`"checksums" : [ "none" ]`  
+
+Checksums can, but do not have to be passed.
+Either all checksums for the IEs can be present in a file at the makeSIP.pl level ("collected", example 2), in which case the filename is passed, and the checksum type.
+There can also be one checksum file per file ("separate", example 1), then the file extension of the checksum file is given, and the checksum type.
+Important note for the checksum file: only single line break (Linux style), separator between checksum and file is a tab, path specifications/with/these/slashes!
+
+### collection.xml
+An IE can be assigned to a collection. This requires an XML with the following structure:  
+`<?xml version='1.0' encoding='UTF-8' standalone='no'?> `  
+`<collections xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/"> `  
+` <collection> `  
+` <dcterms:isPartOf>OpenAccess-ejournals/Hindawi/Journal of Automated Methods and Management in Chemistry</dcterms:isPartOf> `  
+` <dc:title>2010</dc:title> `  
+` <dc:identifier xsi:type="dcterms:ISSN">0000-9999</dc:identifier> `  
+` </collection>`  
+`</collections>`  
+
+A <collection> tag is created for the collection. The IE level metadata is stored as dc / dcterms - metadata. Mandatory are information about dc:title (name of the collection) and dc:isPartOf (further parent collections, currently available are "IWF" and "OpenAccess-ejournals").
+
+### descriptive metadata on file level
+
+With an additional XML on the level of the file, file metadata can be provided. The XML is named as follows:  
+[filename].[file extension].fileMD.xml  
+As file metadata further dc-/dcterms elements can be passed, but also other metadata like label and note. For a complete overview of the possible file metadata you can look in Rosetta under Management -> Deposit -> CSV-Template. 
 
 ## Authors
 
