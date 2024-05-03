@@ -15,6 +15,7 @@ Die Dateien liegen geordnet vor:
 * eine collection.xml, wenn die IE eine oder mehrerer Collections zugeordnet wird
 * eine ieMD.xml, wenn weitere Metadaten auf IE-Ebene mitgegeben werden sollen (z.B. aus einem Harvest oder CMS-Record-IDs)
 * eine checksums.md5 (oder andere Dateiendung), wenn Checksummen vorhanden sind, alternativ je Datei eine Datei mit [Dateiname].[Dateiendung].[Checksummenformat]
+* eine [Dateiname].[Dateiendung].fileMD.xml, wenn Metadaten auf File-Ebene mitgegeben werden sollen																					   
 * Source-Metadaten liegen im Ordner SOURCE_MD
 ```
 Ordner
@@ -53,18 +54,29 @@ Ordner
 
 ## Skript ausführen
 Das Skript kann lokal oder auf dem Server genutzt werden.
+Aufruf des Skriptes erfolgt mit folgenden Kommandozeilenparametern:   
+`perl makeSIP.pl`   
+`--inputfolder "/c/path/to/dir"`   
+gibt den Pfad zu den Paketen an, die gepackt werden sollen
 
-Config.json und makeSIPs.pl liegen im selben Ordner wie die zu packenden Pakete. Auf dem Server kann das Skript per Kommandozeile mit folgendem Befehl aufgerufen werden:
-`perl makeSIP.pl`
+`--configfile "/c/path/to/Config.json"`      
+gibt die Config.json an, diese kann nun auch variabel benannt werden, z.B. nach Producer / Material Flow
+
+`--outputfolder "/c/path/to/outputdir"`  
+gibt den Pfad an, an dem der Output (SIPs und Report) weggeschrieben werden, erstellt einen neuen Ordner, falls noch nicht vorhanden. Falls im angegebenen Ordner Dateien vorhanden sind, wird abgebrochen, um keine Pakete zu überschreiben
+
+
+
+
 
 ### Welche Metadaten werden in welche Konfigurationsdatei übergeben?
 
 * Config.json
 
+	- dc:rights
+    - dcterms:accessRights
+    - User Defined Fields		   
     - IE Entity Type
-    - Status
-    - User Defined Fields
-    - Access Right Policy ID
     - dcterms:license
     - Source Metadata
     - Repräsentationen
@@ -84,10 +96,21 @@ Config.json und makeSIPs.pl liegen im selben Ordner wie die zu packenden Pakete.
 Die Konfigurationsdatei ist im JSON-Format, und kann per Editor geändert werden.
 
 ### Access Rights
-Beispiel:  
-`"accessRight" : "16728",`
+Wird nun ausschließlich über den Material Flow geregelt.
 
-Für die Access Rights muss die ID angegeben werden, dies bedeutet auch, dass für DEV, TEST und PROD andere IDs vergeben werden müssen.
+### DC Rights
+Beispiele:  
+`"dcRights" : "Rechteangabe"` 
+`"dcRights" : null`  
+
+Der Wert für dc:rights kann für alle IEs in der Config.json angegeben werden. Wenn für jedes Paket individuell ein dc:rights vergeben werden soll, so muss dies in der dc:xml mitgegeben werden. Der Wert für dctermsAccessrights in der Config.json wird mit "null" ausgefüllt. 
+
+### DC Terms Access Rights
+Beispiele:  
+`"dctermsAccessRights" : "AccessRights"` 
+`"dctermsAccessRights" : null`  
+
+Der Wert für dcterms:accessrights kann für alle IEs in der Config.json angegeben werden. Wenn für jedes Paket individuell ein dcterms:accessrights vergeben werden soll, so muss dies in der dc:xml mitgegeben werden. Der Wert für dctermsAccessrights in der Config.json wird mit "null" ausgefüllt.  
 
 ### User Defined Felder
 Beispiel:  
@@ -143,6 +166,7 @@ Beispiel:
 
 Es können beliebig viele Representations mitgegeben werden, sofern sie in Rosetta hinterlegt sind.
 Es wird für jede Repräsentation mitgegeben, ob die verpflichtend vorhanden sein muss ("mandatory"), oder optional vorliegen darf ("optional").
+	Achtung: wenn eine Repräsentation nicht angegeben ist, dann wird diese auch nicht übernommen.																						   
 
 
 ### Subfolders als Label
@@ -187,24 +211,33 @@ Wichtiger Hinweis für die Prüfsummendatei: nur einfacher Zeilenumbruch (Linux-
 Eine IE kann einer Collection zugewiesen werden. Hierfür wird ein XML mit folgendem Aufbau benötigt:  
 `<?xml version='1.0' encoding='UTF-8' standalone='no'?>  `  
 `<collections xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/">  `  
-`  <collection>  `  
-`	  <dcterms:isPartOf>OpenAccess-ejournals/Hindawi/Journal of Automated Methods and Management in Chemistry</dcterms:isPartOf>  `  
-`	  <dc:title>2010</dc:title>  `  
-`	  <dc:identifier xsi:type="dcterms:ISSN">0000-9999</dc:identifier>  `  
-`  </collection>`  
+`  <collection>`
+`    <dcterms:isPartOf>Open Access E-Journals/</dcterms:isPartOf>`
+`    <dc:title>Examplejournal</dc:title>`
+`    <dc:identifier xsi:type="dcterms:ISSN">Online: 1234-1234</dc:identifier>`
+`  </collection>`
+`  <collection>`
+`    <dcterms:isPartOf>Open Access E-Journals/Examplejournal</dcterms:isPartOf>`
+`    <dc:title>vol 1</dc:title>`
+`    <dc:date>2026</dc:date>`
+`  </collection>`
+`  <collection>`
+`    <dcterms:isPartOf>Open Access E-Journals/Examplejournal/vol 1</dcterms:isPartOf>`
+`    <dc:title>issue 1</dc:title>`
+`  </collection>`
 `</collections>`  
 
-Für die collection wird ein <collection>-Tag angelegt. Die Metadaten auf IE-Ebene werden als dc / dcterms - Metadaten abgelegt. Verpflichtend sind Angaben zu dc:title (Name der Collection) und dc:isPartOf  (weitere übergeordnete Collections, aktuell sind vorhanden "IWF" und "OpenAccess-ejournals").
-
+Für die collection wird ein <collection>-Tag angelegt. Die Metadaten auf Collection-Ebene werden als dc / dcterms - Metadaten abgelegt. Verpflichtend sind Angaben zu dc:title (Name der Collection) und dc:isPartOf.    
+Die DC-Metadaten auf Collection-Ebene werden beim erstmaligen Anlegen der Collection abgelegt und werden danach NICHT überschrieben / ergänzt.    
+Beispiel: Auf Ebene der Collection "Examplejournal" wird die ISSN als dc:identifier übergeben und in Rosetta abgelegt. Wenn bei einem weiteren Ingest / anderen SIP die dc:publisher in der collection.xml steht (und somit auch in der CSV), so wird dieses NICHT in Rosetta ergänzt.
+ACHTUNG: Collections dürfen keinen "/" im Titel haben - bitte ersetzen durch ein passendes Sonderzeichen: " : " bei Titelzusatz, " = " bei Paralleltiteln
 ### deskriptive Metadaten auf File Ebene
 
 Mit einer zusätzlichen XML auf Ebene des Files können FileMetadaten mitgegeben werden. Die XML wird dabei wie folgt benannt:  
 [Dateiname].[Dateiendung].fileMD.xml  
 Als Filemetadaten können weiter dc-/dcterms-Elemente übergeben werden, aber auch andere Metadaten wie Label und Note. Für eine komplette Übersicht der möglichen Filemetadaten kann man in Rosetta schauen unter Management -> Deposit -> CSV-Template.  
 
-## Weitere Entwicklungmöglichkeiten:
-* Werte über Webservice abprüfen
-* Module erstellen für generische Aufgaben
+
 
 # CSV Ingest generic (english version of README)
 
@@ -215,13 +248,14 @@ The configuration is provided via Config.json.
 ## Prerequisites
 The files are available in an folderstructure:
 * one folder per IE
-* a subfolder named after the representations
-* in the subfolder the respective files
+* one subfolder named after the representations
+* the respective files in the subfolder
 * a dc.xml with the descriptive metadata in the IE folder
 * a collection.xml, if the IE is assigned to one or more collections
 * an ieMD.xml if further metadata should be included on IE level (e.g. from a harvest or CMS record IDs)
-* a checksums.md5 (or other file extension) if checksums are present, alternatively one file per file with [filename].[file extension].[checksum format].
-* Source metadata are located in the folder SOURCE_MD
+* a checksums.md5 (or other file extension) if checksums are present, alternatively one file with [filename].[file extension].[checksum format] per file.
+																					   
+* Source metadata is located in the folder SOURCE_MD
 ```
 folder
 |  
@@ -259,18 +293,31 @@ folder
 
 ## Run script
 The script can be used locally or on the server.
-Local: on Cygwin some Perl modules have to be installed.
-Server: on the Myapp Perl is installed.
+The script is called with the following command line parameters:
+									   
 
-Config.json and makeSIPs.pl are in the same folder as the packages to be packed. On the server, the script can be invoked via command line with the following command:
+																																									  
 `perl makeSIP.pl`
+`--inputfolder "/c/path/to/dir"`
+Specifies the path to the packages to be packed
+
+`--configfile "/c/path/to/Config.json"`
+specifies the Config.json, which can now also be named variably, e.g. Producer / Material Flow
+
+`--outputfolder "/c/path/to/outputdir"`
+Specifies the path where the output (SIPs and report) is to be saved, creates a new folder if it does not already exist. If there are files in the specified folder, it is cancelled so as not to overwrite any packages
+
+
+
 
 ### What metadata is passed to which configuration file?
 
 * Config.json
 
-    - IE entity type
-    - Status
+	- dc:rights
+    - dcterms:accessRights
+    - User Defined Fields
+    - IE Entity Type
     - User Defined Fields
     - Access Right Policy ID
     - dcterms:license
@@ -289,13 +336,26 @@ Config.json and makeSIPs.pl are in the same folder as the packages to be packed.
 
 
 ## Config.json
-The configuration file is in JSON format, and can be modified using the editor.
+The configuration file is in JSON format, and can be changed using an editor.
 
 ### Access Rights
-Example:  
-`"accessRight" : "16728",`.
+Is now controlled exclusively via the material flow.
+						   
 
-For the Access Rights the ID must be specified, this also means that for DEV, TEST and PROD other IDs must be assigned.
+### DC Rights
+Examples:  
+`"dcRights" : "Rights information"`
+`"dcRights" : null`
+
+The value for dc:rights can be specified for all IEs in Config.json. If a dc:rights is to be assigned individually for each package, this must be specified in the dc:xml. The value for dctermsAccessrights in Config.json is filled in with "null".
+
+### DC Terms Access Rights
+Examples:  
+`"dctermsAccessRights" : "AccessRights"`
+`"dctermsAccessRights" : null`
+
+The value for dcterms:accessrights can be specified for all IEs in Config.json. If a dcterms:accessrights is to be assigned individually for each package, this must be specified in the dc:xml. The value for dctermsAccessrights in Config.json is filled in with "null".  
+																																																																			 
 
 ### User Defined Fields
 Example:  
@@ -338,6 +398,12 @@ Example 3:
 ` `"none" : null},`  
 Example 4:  
 `"sourceMD":`
+															
+		  
+			 
+					
+		  
+			 
 ` { "conservationMD.xml" : "OTHER\" OTHERMDTYPE=\"DelftConservationMetadata;UTF-8"},` `  
 
 All source metadata natively supported by Rosetta can be passed. For this purpose, the filename as well as the MetadataType and character encoding are specified in each case. MetadataType and character encoding are passed with quotes and with separator symbol ; (see examples).
@@ -351,6 +417,7 @@ Example:
 
 Any number of representations can be supplied, as long as they are stored in Rosetta.
 For each representation it is specified whether it must be present ("mandatory"), or whether it may be present ("optional").
+																		   
 
 
 ### Subfolders as label
@@ -418,19 +485,30 @@ There can also be one checksum file per file ("separate", example 1), then the f
 Important note for the checksum file: only single line break (Linux style), separator between checksum and file is a tab, path specifications/with/these/slashes!
 
 ### collection.xml
-An IE can be assigned to a collection. This requires an XML with the following structure:  
-`<?xml version='1.0' encoding='UTF-8' standalone='no'?> `  
-`<collections xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/"> `  
-` <collection> `  
-` <dcterms:isPartOf>OpenAccess-ejournals/Hindawi/Journal of Automated Methods and Management in Chemistry</dcterms:isPartOf> `  
-` <dc:title>2010</dc:title> `  
-` <dc:identifier xsi:type="dcterms:ISSN">0000-9999</dc:identifier> `  
-` </collection>`  
-`</collections>`  
+An IE can be assigned to a collection. This requires an XML with the following structure:
+`<?xml version='1.0' encoding='UTF-8' standalone='no'?> `
+`<collections xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/"> `
+` <collection>`
+` <dcterms:isPartOf>Open Access E-Journals/</dcterms:isPartOf>`
+` <dc:title>Examplejournal</dc:title>`
+` <dc:identifier xsi:type="dcterms:ISSN">Online: 1234-1234</dc:identifier>`
+` </collection>`
+` <collection>`
+` <dcterms:isPartOf>Open Access E-Journals/Examplejournal</dcterms:isPartOf>`
+` <dc:title>vol 1</dc:title>`
+` <dc:date>2026</dc:date>`
+` </collection>`
+` <collection>`
+` <dcterms:isPartOf>Open Access E-Journals/Examplejournal/vol 1</dcterms:isPartOf>`
+` <dc:title>issue 1</dc:title>`
+` </collection>`
+`</collections>`
 
-A <collection> tag is created for the collection. The IE level metadata is stored as dc / dcterms - metadata. Mandatory are information about dc:title (name of the collection) and dc:isPartOf (further parent collections, currently available are "IWF" and "OpenAccess-ejournals").
-
-### descriptive metadata on file level
+A <collection> tag is created for the collection. The metadata at collection level is stored as dc / dcterms metadata. Information on dc:title (name of the collection) and dc:isPartOf is mandatory.    
+The DC metadata at collection level is stored when the collection is created for the first time and is NOT overwritten / supplemented afterwards.    
+Example: At the level of the "Examplejournal" collection, the ISSN is transferred as dc:identifier and stored in Rosetta. If the dc:publisher is in the collection.xml for another ingest / another SIP (and therefore also in the CSV), this is NOT added in Rosetta.
+ATTENTION: Collections must not have a "/" in the title - please replace with a suitable special character: " : " for title addition, " = " for parallel titles
+### descriptive metadata at file level
 
 With an additional XML on the level of the file, file metadata can be provided. The XML is named as follows:  
 [filename].[file extension].fileMD.xml  

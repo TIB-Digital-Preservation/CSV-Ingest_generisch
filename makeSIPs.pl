@@ -10,24 +10,59 @@ use File::Copy::Recursive qw(dircopy);
 use File::Copy qw/move/;
 use File::Basename;
 use File::Find;
+use File::Path qw(rmtree);				  
 use JSON;
 use Data::Dumper;
 use Cwd;
 use utf8;
 use Encode;
 binmode STDOUT, ":utf8";    # for output
-my $version = "1.2";
+use Getopt::Long;
+my $version = "1.7";
 
 #print instructions
 print "CSV-Ingest_generisch Version: ".$version."\n";
 print "Das Skript erstellt eine CSV und die Ordnerstruktur für den Ingest.
 Der erstellte Ordner kann über einen Submission Job geingestet werden.
-Die Konfiguration wird über Config.json mitgegeben.
-Siehe auch README.MD\n";
-print "Checksummendatei: nur einfacher Zeilenumbruch (Linux-Style), Trennzeichen zwischen Prüfsumme und Datei ist ein Tab, Schrägstriche werden umgedreht!\n";
+Die Konfiguration wird über Config.json mitgegeben. Siehe auch README.MD\n";
+print "------------------------------------------\n";
+print "---START----------------------------------\n";
+my $inputfolder;
+my $configfile;
+my $outputfolder;
+GetOptions(
+    'inputfolder=s' => \$inputfolder, #=S with a string
+    'configfile=s' => \$configfile,
+    'outputfolder=s' => \$outputfolder
+) or die 'unbekannte(r) Parameter\n';
+die('Parameter fehlt: --inputfolder "/cygdrive/u/path/to/dir"\n') unless defined $inputfolder;
+die('Parameter fehlt: --configfile "/cygdrive/u/path/to/Config.json"\n') unless defined $configfile;
+die('Parameter fehlt: --outputfolder "/cygdrive/u/path/to/outputdir"\n') unless defined $outputfolder;
+
+#check inputparameter
+die 'inputfolder '.$inputfolder.' fehlt."\n'
+  unless (-d $inputfolder);
+die 'configfile '.$configfile.' fehlt."\n'
+  unless (-f $configfile);
+if (-d $outputfolder){
+    my $numFiles = countfiles($outputfolder);
+    #Abbrechen, wenn der Ordner bereits Dateien enthält
+    if ($numFiles > 0){
+        die 'outputfolder '.$outputfolder.' enthält bereits Dateien."\n'
+    }
+} else {
+    mkdir $outputfolder or die $!;
+    print "outputfolder ".$outputfolder." angelegt\n";
+}
 
 #read in folders
-my @allFolders = grep { -d } glob("*");
+my @allFoldersLong = grep { -d } glob($inputfolder."/*");
+#in allFolder werden nur die Ordnername gespeichert, z.B. "Beispiel", "123456"
+my @allFolders;
+foreach my $folder (@allFoldersLong){
+    my $folder = fileparse($folder);
+    push (@allFolders, $folder);
+}
 my @filesComplete;
 my @csvCreated;
 my @createdSIPs;
@@ -36,13 +71,14 @@ my %files_md5s;
 my $config;
 {
   local $/; #Enable 'slurp' mode
-  open my $fh, "<", "Config.json";
+  open my $fh, "<", $configfile;
   $config = <$fh>;
   close $fh;
 }
 my $configParams = decode_json($config);
 
-my $accessRight = $configParams->{'accessRight'};
+my $dcRights = $configParams->{'dcRights'};
+my $dctermsAccessRights = $configParams->{'dctermsAccessRights'};
 my $userDefinedA = $configParams->{'userDefinedA'};
 my $userDefinedB = $configParams->{'userDefinedB'};
 my $ieEntityType = $configParams->{'ieEntityType'};
@@ -54,17 +90,18 @@ my %representations = %{ $configParams->{'representations'}};
 my $subfoldersAsLabel = $configParams->{'subfoldersAsLabel'};
 my $ieMD = $configParams->{'ieMD'};
 my @checksums = @{ $configParams->{'checksums'} }; # "separat","gesammelt","keine"
+my $checksumsRegex;
 
-my @variableHeaders = ('Access Rights Policy ID (IE)','IE User Defined A','IE User Defined B','IE Entity Type',"License (DCTERMS)");
-my @variableIEValues = ($accessRight,$userDefinedA,$userDefinedB,$ieEntityType,$dctermsLicense);
+my @variableHeaders = ('Rights (DC)','Access Rights (DCTERMS)','IE User Defined A','IE User Defined B','IE Entity Type',"License (DCTERMS)");
+my @variableIEValues = ($dcRights,$dctermsAccessRights,$userDefinedA,$userDefinedB,$ieEntityType,$dctermsLicense);
 
 #wenn nur eine Datei für Checksums vorliegt einen Hash erstellen
 if ($checksums[0] eq "gesammelt"){
   #check if file exists
   my $checksumfile = $checksums[1];
-  if (-f $checksumfile){
+  if (-f $inputfolder."/".$checksumfile){
     my $filehandle;
-    open $filehandle,"<",$checksumfile;
+    open $filehandle,"<",$inputfolder."/".$checksumfile;
     chomp(my @oldmd5s = <$filehandle>);
     close $filehandle;
 
@@ -77,6 +114,8 @@ if ($checksums[0] eq "gesammelt"){
     print "Prüfsummendatei fehlt";
     exit;
   }
+} elsif ($checksums[0] eq "separat"){
+    $checksumsRegex = "\\".$checksums[1];
 }
 
 #check if necessary files are available
@@ -89,7 +128,7 @@ foreach my $folder (@allFolders) {
 		push (@filesComplete, $folder);
     printRep($folder.": alles in Ordnung\n\n");
 	} elsif ($result_checkComplete==1){
-			printRep($folder.": ERROR: es fehlen Dateien, die verpflichtend sind\n\n");
+			printRep($folder.": ERROR: es fehlen Dateien, die verpflichtend sind oder diese sind fehlerhaft\n\n");
 	}
 }
 
@@ -139,7 +178,7 @@ sub checkComplete{
 	my $errormessage = $foldername.": ";
 
   #check Filenames
-	my $path = getcwd;
+	my $path = $inputfolder;
 	$path = $path."/".$foldername;
 	my $numAllFiles = 0;
   my @files;
@@ -165,12 +204,13 @@ sub checkComplete{
       }
     }
 	}
-
-  #Repräsentationen prüfen, anhand der Angabe ob manatory oder optional unterscheiden zw. Warnung und Fehler
+	foreach my $file (@files) {
+	}
+  #Repräsentationen prüfen, anhand der Angabe ob mandatory oder optional unterscheiden zw. Warnung und Fehler
   while ((my $representation, my $isMandatory) = each %representations){
     #wenn Ordner vorhanden ist, aber keine Dateien darin, dann liegt ein Fehler vor
-    if (-d "$foldername/$representation"){
-      my $num_files = countfiles("$foldername/$representation");
+    if (-d "$path/$representation"){
+      my $num_files = countfiles("$path/$representation");
       if ($num_files == 0){
         $existError = 1;
         $errormessage = $errormessage."keine Datei im Ordner ".$representation.", ";
@@ -188,17 +228,18 @@ sub checkComplete{
     #check for checksumsfiles
 	if (($checksums[0] eq "separat")||($checksums[0] eq "gesammelt")){
 		foreach my $file (@files){
-		  if ($file =~ m/$foldername\/$representation/ && $file !~ /.*$checksums[1]$/ && -f $file && $file !~ /.*\.fileMD.xml$/){
+		  # wenn File in Representation       UND ist ist ein file UND endet nicht auf fileMDxml
+		  if ($file =~ m/$foldername\/$representation/ && -f $file && $file !~ /.*\.fileMD.xml$/ ){
 			if ($checksums[0] eq "gesammelt"){
 			  #check if exists for each file otherwise error
-			  my $path = getcwd;
+			  my $path = $inputfolder;
 			  $file =~ s/$path\///;
 			  unless ($files_md5s{$file}){
 				$existError = 1;
 				$errormessage = $errormessage."Checksum für  ".$file." fehlt, ";
 			  }
-			} elsif ($checksums[0] eq "separat"){
-			  #TODO check if file exists otherwise error
+			} elsif ($checksums[0] eq "separat" && $file !~ /.*$checksumsRegex$/){
+			  #check if file exists otherwise error
 			  my $checksumfile = $file.$checksums[1];
 			  unless (-f $checksumfile){
 				$existError = 1;
@@ -210,14 +251,14 @@ sub checkComplete{
 	}
   }
 
-	if (-f "$foldername/dc.xml"){
-		my $messCharac = checkCharacters("$foldername/dc.xml");
+	if (-f "$path/dc.xml"){
+		my $messCharac = checkCharacters("$path/dc.xml");
 		if ($messCharac ne "ok"){
 			$existError = 1;
 			$errormessage = $errormessage.$messCharac;
 		}
     my $parser = XML::LibXML->new;
-    my $xml = eval { $parser->parse_file("$foldername/dc.xml") };
+    my $xml = eval { $parser->parse_file("$path/dc.xml") };
       if ( ! $xml ) {
           printRep("Can't parse $foldername/dc.xml: $@");
           $existError = 1;
@@ -229,13 +270,13 @@ sub checkComplete{
 	}
 
   #if collection.xml file
-  if (-f "$foldername/collection.xml"){
-	   my $messCharac = checkCharacters("$foldername/collection.xml");
+  if (-f "$path/collection.xml"){
+	   my $messCharac = checkCharacters("$path/collection.xml");
 	   if ($messCharac ne "ok"){
 		      $existError = 1;
 		      $errormessage = $errormessage.$messCharac;
 	   }
-     if (-z "$foldername/collection.xml"){
+     if (-z "$path/collection.xml"){
        $existError = 1;
        $errormessage = $errormessage."collection.xml ist eine leere Datei, ";
      }
@@ -244,8 +285,8 @@ sub checkComplete{
 
   #check if ieMD exist
   if ($ieMD eq "true") {
-    if (-f "$foldername/ieMD.xml"){
-		my $messCharac = checkCharacters("$foldername/ieMD.xml");
+    if (-f "$path/ieMD.xml"){
+		my $messCharac = checkCharacters("$path/ieMD.xml");
 		if ($messCharac ne "ok"){
 			$existError = 1;
 			$errormessage = $errormessage.$messCharac;
@@ -292,34 +333,73 @@ sub createCSV{
 	#my @csvLine;
 	my @DCheaders;
 	my @DCvalues;
-  my @ColDCvalues;
+				  
 	my $arrayLenght;
 	my @sipLine,
 	my @csvLineIE;
   my @csvLineCollection;
 
   #create header for collection.xml
-  if (-f $foldername."/collection.xml") {
-    my $dom = XML::LibXML->load_xml(no_cdata => 0, location => $foldername."/collection.xml");
-    my $nodes= $dom->findnodes( "collections/collection/*");
-    foreach my $node (@$nodes){
-      my $attribute = 0;
-      if ($node->hasAttributes()){
-        my @attributes = $node->attributes();
-        foreach my $att (@attributes){
-          $attribute = $att;
+  my @headerColMD; # array with all the headers
+  my @colMDValues; # array of arrays, arrays consists of values, mapped to the headers
+  my $colCount = 0;
+  if (-f "${inputfolder}/${foldername}/collection.xml") {
+    my $dom = XML::LibXML->load_xml(no_cdata => 0, location => $inputfolder."/".$foldername."/collection.xml");
+    my $nodes= $dom->findnodes( "collections/collection"); #pro collection einzeln
+	foreach my $node (@$nodes) {
+	  $colCount++;
+      my @arrValues;
+		#fülle temporäre Header / Value Arrays mit den Werten aud der fileMD.xml aus
+      my @hColTemp;
+      my @vColTemp;
+      my $nodesDC= $node->findnodes("*");
+      foreach my $nodeDC (@$nodesDC){
+        my $attribute = 0;
+        if ($nodeDC->hasAttributes()){
+          my @attributes = $nodeDC->attributes();
+          foreach my $att (@attributes){
+            $attribute = $att;
+          }
+        }
+        my $header = makeHeader($nodeDC->nodeName, $attribute, "0");
+        push(@hColTemp, $header);
+        my $colMdContent = makeContent($nodeDC);
+        push(@vColTemp,$colMdContent);
+      }
+	#befüllen von @headerColMD mit den Headern, @arrValues mit den Werten
+      if (scalar @headerColMD == 0){
+        #print "neuer Header wird angelegt\n";
+        push(@headerColMD, @hColTemp);
+        push(@arrValues, @vColTemp);
+      } else {
+        #print "bereits header vorhanden\n";
+        my $headerCount = scalar @headerColMD;
+        for (my $i = 0; $i < $headerCount; $i++){
+          #sobald ein Element im hColTemp übereinstimmt, lege die Werte jeweils ab
+          my $position = 0;
+          until (($position==scalar @hColTemp)||($headerColMD[$i] eq $hColTemp[$position])){
+            $position++;
+          }
+          #setze den Wert von vColTemp auf die gefundene position
+          $arrValues[$i] = $vColTemp[$position];
+          #entferne header und value aus temporären arrays
+          splice(@hColTemp,$position,1);
+          splice(@vColTemp,$position,1);
+        }
+        if (scalar @hColTemp >0){ #nachdem alle vorhandenen Header zugeordnet sind, werden nun alle restlichen, neuen hinzugefügt
+          push(@headerColMD, @hColTemp);
+          push(@arrValues, @vColTemp);
         }
       }
-      my $header = makeHeader($node->nodeName, $attribute, "0");
-    	push (@DCheaders, $header);
-		my $colContent = makeContent($node);
-		push (@ColDCvalues, $colContent);
-	}
-  }
-  my $ColCount = @ColDCvalues;
+    my $ref = \@arrValues;
+    push (@colMDValues, $ref);
+    }
+   }
+    my $colCountColums = scalar @headerColMD;
+
 
 	#read in dc.XML
-	my $filename = $foldername.'/dc.xml';
+	my $filename = $inputfolder."/".$foldername.'/dc.xml';
 	my $dom = XML::LibXML->load_xml(no_cdata => 0,location => $filename);
 	my $nodes= $dom->findnodes( $dcXmlHeadElement);
   if (scalar @$nodes == 0){
@@ -334,11 +414,17 @@ sub createCSV{
         $attribute = $att;
       }
     }
-    my $header = makeHeader($node->nodeName, $attribute, "0");
-  	push (@DCheaders, $header);
-	my $content = makeContent($node);
+    # pruefe ob in dc oder dcterms vorhanden
+    if (isValidDc($node->nodeName) == 1){
+        my $header = makeHeader($node->nodeName, $attribute, "0");
+  	    push (@DCheaders, $header);
+	    my $content = makeContent($node);
 		push (@DCvalues, $content);
-	}
+	} else {
+	    $existError = 1;
+	    $errormessage = $errormessage." ".$node->nodeName." ist kein valides DC / DCterms Element";
+    }
+  }
 
   #fill sourceMD if available
 	my @headerSourceMD;
@@ -354,7 +440,7 @@ sub createCSV{
   my @headerIeMD;# = ('Primary Seed URL','WCT Identifier','Target Name','Group','Harvest Date','Harvest Time');
   my @allIeMD;
   if ($ieMD eq "true") {
-    my $filename = $foldername.'/ieMD.xml';
+    my $filename = $inputfolder."/".$foldername.'/ieMD.xml';
   	my $dom = XML::LibXML->load_xml(no_cdata => 0, location => $filename);
   	my $nodes= $dom->findnodes("metadata/*");
   	foreach my $node (@$nodes){
@@ -377,7 +463,7 @@ sub createCSV{
   }
 
   #fill out if fileMD
-  my @headerFileMD; # aray with all the headers
+  my @headerFileMD; # array with all the headers
   my @fileMDValues; # array of arrays, first element is filename, following array consists of values, mapped to the headers
   my @fileMDfiles = fileMDcheck($foldername); #array contains all filenames with associated fileMD.xml, or "false" if not fileMD
   if ($fileMDfiles[0] ne "false"){
@@ -387,10 +473,10 @@ sub createCSV{
       my @arrValues;
       #füge Dateinamen als erstes Element hinzu
       push (@arrValues, $fileMDfiles[$i]);
-      #fülle tempräre Header / Value Arrays mit den Werten aud der fileMD.xml aus
+      #fülle temporäre Header / Value Arrays mit den Werten aud der fileMD.xml aus
       my @hFtemp;
       my @aVtemp;
-      my $dom = XML::LibXML->load_xml(location => $foldername."/".$fileMDfiles[$i].".fileMD.xml");
+      my $dom = XML::LibXML->load_xml(location => $inputfolder."/".$foldername."/".$fileMDfiles[$i].".fileMD.xml");
       my $nodes= $dom->findnodes( "fileMD/*");
       foreach my $node (@$nodes){
         my $attribute = 0;
@@ -437,6 +523,7 @@ sub createCSV{
 
 	#make array for first line of CSV
 	@csvLineHeaders = ('Object Type','Title (DC)');
+	push (@csvLineHeaders, @headerColMD);
 	push (@csvLineHeaders, @DCheaders);
 	push (@csvLineHeaders, @variableHeaders);
   if (@headerIeMD){
@@ -473,20 +560,23 @@ sub createCSV{
 	push(@csv,[@sipLine]);
 
   #make line for collection if collection.dc is available
-  if (-f $foldername."/collection.xml"){
-    @csvLineCollection[$arrayLenght] = undef;
-  	@csvLineCollection[0] = "Collection";
-    for (my $i = 0; $i<$ColCount; $i++){
-        @csvLineCollection[$i+2] = $ColDCvalues[$i];
+  if (-f "${inputfolder}/${foldername}/collection.xml"){
+    for (my $i = 0; $i<$colCount; $i++){
+        @csvLineCollection[$arrayLenght] = undef;
+  	    @csvLineCollection[0] = "Collection";
+        for (my $c = 0; $c<$colCountColums; $c++){
+            @csvLineCollection[$c+2] = $colMDValues[$i][$c];
+        }
+    push(@csv,[@csvLineCollection]);
     }
-  	push(@csv,[@csvLineCollection]);
+								   
   }
 
 	#make array for IE
 	@csvLineIE = ('IE',undef);
-  if (-f "${foldername}/collection.xml"){
+  if (-f "${inputfolder}/${foldername}/collection.xml"){
     my @emptyCells;
-    @emptyCells[$ColCount-1] = undef;
+    @emptyCells[$colCountColums-1] = undef;
     push (@csvLineIE, @emptyCells);
   }
 	push (@csvLineIE, @DCvalues);
@@ -505,19 +595,21 @@ sub createCSV{
 
   #make array for representations and files
   while ((my $representation, my $isMandatory) = each %representations){
-    if (-d "$foldername/$representation") {
+    if (-d "${inputfolder}/${foldername}/${representation}") {
       my @repLine = makeRepLine($representation,$arrayLenght);
       push(@csv,[@repLine]);
       #foreach file in representation make @csvLine
-      my $path = $foldername."/".$representation."/";
-      #my @files = File::Find::Rule->in($path);
+      my $path = $inputfolder."/".$foldername."/".$representation."/";
+											   
       my @files;
       find( sub{ push @files, $File::Find::name }, $path);
       foreach my $file (@files){
-        if (-f $file && $file !~ /.*\.fileMD.xml$/ && (($checksums[0] eq "separat" && $file !~ /.*$checksums[1]$/)||($checksums[0] ne "separat"))){
-			  #hier fileMD rausuchen und übergeben, falls vorhanden
-				  my @mdValues;
-			  for (my $l = 0; $l< scalar @fileMDValues; $l++){
+        if (-f $file && $file !~ /.*\.fileMD.xml$/ && (($checksums[0] eq "separat" && $file !~ /.*$checksumsRegex$/)||($checksums[0] ne "separat"))){
+        $file =~ s/$inputfolder\///;
+        print $file."\n";
+			#hier fileMD rausuchen und übergeben, falls vorhanden
+			my @mdValues;
+			for (my $l = 0; $l< scalar @fileMDValues; $l++){
 				if ($file =~ m/$fileMDValues[$l][0]/){
 				  my $count = 1;
 				  my $last_arr_index = $#{ $fileMDValues[$l] };
@@ -527,48 +619,54 @@ sub createCSV{
 				  }
 				}
 			  }
-			  if (!@mdValues){
+			if (!@mdValues){
 				@mdValues = undef;
 			  }
-			  #print Dumper @mdValues;
-			  my @fileLine = makeFileLine($file,$arrayLenght,\@mdValues, scalar @headerFileMD);
-			  push(@csv,[@fileLine]);
+			#print Dumper @mdValues;
+			my @fileLine = makeFileLine($file,$arrayLenght,\@mdValues, scalar @headerFileMD);
+			push(@csv,[@fileLine]);
         }
       }
     }
   }
 
 	#make csv
-	my $csv = Text::CSV->new ( { binary => 1, eol =>"\r\n"} )
+	my $csv = Text::CSV->new ( { binary => 1, eol =>"\n"} )
 		or die "Cannot use CSV: ".Text::CSV->error_diag ();
-	open my $fh, '> :utf8', "$foldername.csv" or die "$foldername.csv: $!";
+	my $csvOutputTemp = $outputfolder."/".$foldername."_temp.csv";
+	open my $fh, '> :utf8', $csvOutputTemp or die "$csvOutputTemp: $!";
 	$csv->print ($fh, $_) for @csv;
-	close $fh or die "$foldername.csv: $!";
+	close $fh or die "$csvOutputTemp: $!";
 
 	#change first line of CSV so that it does not contain any quotes
-	my $CSVfilename = "$foldername.csv";
-	open my $in_fh, '< :utf8', $CSVfilename
-	  or warn "Cannot open $CSVfilename for reading: $!";
+	my $CSVfilename = $csvOutputTemp;
+										
+	open my $in_fh, '< :utf8', $CSVfilename or warn "Cannot open ".$CSVfilename." for reading: $!";
 	my $first_line = <$in_fh>;
 	$first_line =~ s/"//g;
 
-	open my $out_fh, '> :utf8', "$CSVfilename.tmp"
-	  or warn "Cannot open $CSVfilename.tmp for writing: $!";
+    my $csvOutput = $outputfolder."/".$foldername.".csv";
+	open my $out_fh, '> :utf8', $csvOutput or warn "Cannot open ".$csvOutput." for writing: $!";
+														  
 
 	print {$out_fh} $first_line;
-	print {$out_fh} $_ while <$in_fh>;
+	while (<$in_fh>) {
+	    my $line = $_;
+	    $line =~ s/\r//g;
+	    print {$out_fh} $line;
+	}
 
 	close $in_fh;
 	close $out_fh;
 
-	# overwrite original with modified copy
-	rename "$CSVfilename.tmp", $CSVfilename
-	  or warn "Failed to move $CSVfilename.tmp to $CSVfilename: $!";
+										
+										
+																 
 
 
   #ExceptionHandling
   if ($existError != 0) {
-    #throw exception ifnot succesful
+    #throw exception if not succesful
     printRep($errormessage."\n");
     return 1; #error
   } else {
@@ -584,7 +682,7 @@ sub mkFolders{
 	my $foldername = $_[0];
   my $existError = 0;
 	my $errormessage = $foldername.": ";
-	my $sipFolder = "SIP_".$foldername;
+	my $sipFolder = $outputfolder."/SIP_".$foldername;
 
 	#erstelle Ordner content und Streams
 	my $fcontent = $sipFolder."/content";
@@ -605,27 +703,34 @@ sub mkFolders{
 	}
 
 	#move csv-file
-	my $from = $foldername.".csv";
+	my $from = $outputfolder."/".$foldername.".csv";
 	my $to = $fcontent."/".$foldername.".csv";
 	my $returnValueCopyCSV = move $from, $to;
+	if ($returnValueCopyCSV == 0){
+				$existError = 1;
+				$errormessage = $errormessage."CSV-File was not moved";
+    } else {
+        unlink($outputfolder."/".$foldername."_temp.csv");
+    }
+
 	#move Representations
   while ((my $representation, my $isMandatory) = each %representations){
-		if (-d "$foldername/$representation") {
-			my $dfrom = $foldername."/".$representation;
+		if (-d "$inputfolder/$foldername/$representation") {
+			my $dfrom = $inputfolder."/".$foldername."/".$representation;
 			my $dto = $forig."/".$representation;
 			my $returnvalueMove = dircopy($dfrom,$dto);
 			if ($returnvalueMove <= 1){
 				$existError = 1;
 				$errormessage = $errormessage."files were not moved";
 			}
-      #delete md5-files in representations if "separat"
+      #delete checksum-files in representations if "separat"
       if ($checksums[0] eq "separat"){
-        #my @files = File::Find::Rule->in($dto);
+												
         my @files;
         find( sub{ push @files, $File::Find::name }, $dto);
         #foreach files in the directory (recursively)
         foreach my $file (@files) {
-          if ($file =~ m/.$checksums[1]$/ && -f $file){
+          if ($file =~ m/$checksumsRegex$/ && -f $file){
             unlink $file;
           }
         }
@@ -643,9 +748,9 @@ sub mkFolders{
 	}
   #ExceptionHandling
   if ($existError != 0) {
-    #throw exception ifnot succesful
+    #throw exception if not succesful
     printRep($errormessage."\n");
-		rmdir -r $sipFolder;
+    rmtree $sipFolder or warn "Could not remove $sipFolder";
     return 1; #error
   } else {
     return 0; #only executed when SIP creation was successful
@@ -720,7 +825,7 @@ sub makeFileLine{
     @fileLine[$arrayLenght-6] = $files_md5s{$file};
     #print $file." : ".$files_md5s{$file}."\n";
   } elsif ($checksums[0] eq "separat"){
-    my $checksumfile = $file.$checksums[1];
+    my $checksumfile = $inputfolder."/".$file.$checksums[1];
     my $filehandle;
     open $filehandle,"<",$checksumfile;
     my $md5 = <$filehandle>;
@@ -743,15 +848,15 @@ sub fillSourceMD {
   ($MDType , $encoding) = split(/;/,$temp, 2);
 	my $returnvalue;
 	my $XML;
-	my $pathSourceMD = $foldername."/SOURCE_MD/".$filename;
+	my $pathSourceMD = $inputfolder."/".$foldername."/SOURCE_MD/".$filename;
 
-	my $firstLinesSourceMD = "<?xml version=\"1.0\" encoding=\"".$encoding."\"?>\r";
-	$firstLinesSourceMD = $firstLinesSourceMD.q(<sourceMD>)."\r";
-	$firstLinesSourceMD = $firstLinesSourceMD."<mdWrap MDTYPE=\"".$MDType."\">\r";
-	$firstLinesSourceMD = $firstLinesSourceMD.q(<xmlData>)."\r";
-	my $lastLinesSourceMD = "</xmlData>\r";
-	$lastLinesSourceMD = $lastLinesSourceMD."</mdWrap>\r";
-	$lastLinesSourceMD = $lastLinesSourceMD."</sourceMD>\r";
+	my $firstLinesSourceMD = "<?xml version=\"1.0\" encoding=\"".$encoding."\"?>\n";
+	$firstLinesSourceMD = $firstLinesSourceMD.q(<sourceMD>)."\n";
+	$firstLinesSourceMD = $firstLinesSourceMD."<mdWrap MDTYPE=\"".$MDType."\">\n";
+	$firstLinesSourceMD = $firstLinesSourceMD.q(<xmlData>)."\n";
+	my $lastLinesSourceMD = "</xmlData>\n";
+	$lastLinesSourceMD = $lastLinesSourceMD."</mdWrap>\n";
+	$lastLinesSourceMD = $lastLinesSourceMD."</sourceMD>\n";
 
 	#fill variable XML with the content of folder SOURCE_MD
 	open(my $fh, "<:encoding(".$encoding.")", $pathSourceMD) or die "cannot open file $pathSourceMD";
@@ -760,8 +865,8 @@ sub fillSourceMD {
 			$XML = <$fh>;
 	}
 	close($fh);
-	$XML =~ s/<\?xml version="1\.0" encoding="$encoding"\?>//;
-	$XML =~ s/\r//g;
+	$XML =~ s/<\?xml version="1\.0" encoding="$encoding".*\?>//;
+				 
 
 	$returnvalue = $firstLinesSourceMD.$XML.$lastLinesSourceMD;
 	return $returnvalue;
@@ -771,21 +876,21 @@ sub fillSourceMD {
 # subroutine counts files in folder
 # returns the number of files
 sub countfiles{
-	my $dir = $_[0];
-	my $path = getcwd;
-	$path = $path."/".$dir;
-	my $numAllFiles = 0;
-	#my @files;
-	#find( sub{ push @files, $File::Find::name if (-f $File::Find::name)}, $path);
-  #my @files = File::Find::Rule->in($path);
-  my @files;
-  find( sub{ push @files, $File::Find::name if (-f $File::Find::name)}, $path);
-	#foreach files in the directory (recursively)
-	foreach my $file (@files) {
-		$numAllFiles += 1;
-	}
-	#print "countfiles: ordner ".$dir." enthält: ".$numAllFiles."\n";
-	return $numAllFiles;
+    my $path = $_[0];
+				   
+						
+    my $numAllFiles = 0;
+    my @filesCount;
+    find( sub{ push @filesCount, $File::Find::name if (-f $File::Find::name)}, $path);
+										   
+			
+																			   
+    #foreach files in the directory (recursively)
+    foreach my $fileCounted (@filesCount) {
+        $numAllFiles += 1;
+    }
+																   
+    return $numAllFiles;
 }
 
 #####################################################################################
@@ -795,19 +900,25 @@ sub makeHeader{
   #hier dc und dterms unterscheiden können nach namespace
   #wenn type vergeben, wird das über attribute eingelesen,
   #Beispiel dc:identifier xsi:type="dcterms:ISSN" wird zu Identifier - ISSN (DC)
+  #Beispiel dc:language xsi:type=“dcterms:ISO639-3 wird zu Identifier - ISO 639-3 (DC)
   my $nodeName = $_[0];
   my $attribute = $_[1];
   my $forFile = $_[2];
   my $name;
   my $namespace;
   my $header;
+  #wenn in einer datei dc und dcterms elemente vorhanden sind, sind diese als namespance durch : abgetrennt
   if ($nodeName =~ m/:/) {
     ($namespace, $name) = split(/:/,$nodeName, 2);
     $namespace = " (".uc($namespace).")";
-    #wenn xsiType vorhanden, dann den Namen auftrennen
-    if ($attribute != 0){
+    #wenn xsiType vorhanden, dann den Namen auftrennen, xsi:type DOI wird von Rosetta nicht unterstützt
+    if (($attribute != 0) && ($attribute !~ m/.*DOI.*/)){
       $attribute =~ s/^ xsi:type="(.*)"/$1/;
       $attribute =~ s/.*://;
+      $attribute =~ s/DCMI(.*)/DCMI $1/;
+      $attribute =~ s/ISO(.*)/ISO $1/;
+      $attribute =~ s/RFC(.*)/RFC $1/;
+      $attribute =~ s/W3CDTF/W 3 CDTF/;
       $namespace = " - ".$attribute.$namespace;
     }
     #$name trennen wenn Camel Style IsPartOf -> Is Part Of
@@ -818,9 +929,9 @@ sub makeHeader{
     $header = ucfirst($nodeName);
     $header =~ s/([A-Z][a-z])/ $1/g;
     $header =~ s/([a-z])([A-Z])/$1 $2/g;
-	$header = $header." (DC)";
+						   
   }
-  if ($forFile == 1){
+  if (($forFile == 1) && ($header =~ m/.*\(DC.*/)){
       $header = "FILE - ".$header;
   }
   #führendes Leerzeichen entfernen
@@ -854,7 +965,7 @@ sub makeContent{
 sub printRep{
   my $message = $_[0];
   print $message;
-  open(OUT, ">>report_SIP_Erstellung.txt") or die $!;
+  open(OUT, ">>".$outputfolder."/report_SIP_Erstellung.txt") or die $!;
   print OUT $message;
   close(OUT);
 }
@@ -909,7 +1020,7 @@ sub fileMDcheck{
   #mache eine Liste von alles Files pro Repräsentationsordner
   while ((my $representation, my $isMandatory) = each %representations){
     my $dir = $foldername."/".$representation;
-    my $path = getcwd;
+    my $path = $inputfolder;
     $path = $path."/".$dir;
     if (-d $path){
       my @files;
@@ -923,7 +1034,7 @@ sub fileMDcheck{
           $belongingFile =~ s/\.fileMD\.xml$//g;
           #wenn ja, dann hänge dies an return dran
           if (-f $belongingFile){
-            $belongingFile =~ s/^.*?$foldername//g;
+            $belongingFile =~ s/^.*?$foldername\/$representation/$representation/g;
             push(@return, $belongingFile);
           } else {
             $file =~ s/^.*?$foldername//g;
@@ -938,4 +1049,83 @@ sub fileMDcheck{
     $return[0] = "false";
   }
   return @return;
+}
+#####################################################################################
+# subroutine checks if there are metadata to be added on file level
+#these metadata shall be added my a file which is called: [filename].[extension].fileMD.xml
+# returns a list of file names or false, if no fileMD
+sub isValidDc{
+    my $dcTag = $_[0];
+    my %dcTags = ("dcterms:abstract" => "valid",
+        "dcterms:accessRights" => "valid",
+        "dcterms:accrualMethod" => "valid",
+        "dcterms:accrualPeriodicity" => "valid",
+        "dcterms:accrualPolicy" => "valid",
+        "dcterms:alternative" => "valid",
+        "dcterms:audience" => "valid",
+        "dcterms:available" => "valid",
+        "dcterms:bibliographicCitation" => "valid",
+        "dcterms:conformsTo" => "valid",
+        "dcterms:coverage" => "valid",
+        "dcterms:created" => "valid",
+        "dcterms:creator" => "valid",
+        "dcterms:date" => "valid",
+        "dcterms:dateAccepted" => "valid",
+        "dcterms:dateCopyrighted" => "valid",
+        "dcterms:dateSubmitted" => "valid",
+        "dcterms:description" => "valid",
+        "dcterms:educationLevel" => "valid",
+        "dcterms:extent" => "valid",
+        "dcterms:format" => "valid",
+        "dcterms:hasFormat" => "valid",
+        "dcterms:hasPart" => "valid",
+        "dcterms:hasVersion" => "valid",
+        "dcterms:identifier" => "valid",
+        "dcterms:instructionalMethod" => "valid",
+        "dcterms:isFormatOf" => "valid",
+        "dcterms:isPartOf" => "valid",
+        "dcterms:isReferencedBy" => "valid",
+        "dcterms:isReplacedBy" => "valid",
+        "dcterms:isRequiredBy" => "valid",
+        "dcterms:issued" => "valid",
+        "dcterms:isVersionOf" => "valid",
+        "dcterms:language" => "valid",
+        "dcterms:license" => "valid",
+        "dcterms:mediator" => "valid",
+        "dcterms:medium" => "valid",
+        "dcterms:modified" => "valid",
+        "dcterms:provenance" => "valid",
+        "dcterms:publisher" => "valid",
+        "dcterms:references" => "valid",
+        "dcterms:relation" => "valid",
+        "dcterms:replaces" => "valid",
+        "dcterms:requires" => "valid",
+        "dcterms:rights" => "valid",
+        "dcterms:rightsHolder" => "valid",
+        "dcterms:source" => "valid",
+        "dcterms:spatial" => "valid",
+        "dcterms:subject" => "valid",
+        "dcterms:tableOfContents" => "valid",
+        "dcterms:temporal" => "valid",
+        "dcterms:title" => "valid",
+        "dcterms:type" => "valid",
+        "dcterms:valid" => "valid",
+        "dc:coverage" => "valid",
+        "dc:creator" => "valid",
+        "dc:contributor" => "valid",
+        "dc:date" => "valid",
+        "dc:description" => "valid",
+        "dc:format" => "valid",
+        "dc:identifier" => "valid",
+        "dc:language" => "valid",
+        "dc:publisher" => "valid",
+        "dc:relation" => "valid",
+        "dc:rights" => "valid",
+        "dc:source" => "valid",
+        "dc:subject" => "valid",
+        "dc:title" => "valid",
+        "dc:type" => "valid",
+    );
+
+    return exists($dcTags{$dcTag});
 }
